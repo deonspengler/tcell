@@ -1,4 +1,4 @@
-module go.mau.fi/tcell
+module github.com/deonspengler/tcell
 
 go 1.18
 
@@ -12,3 +12,5 @@ require (
 )
 
 require github.com/rivo/uniseg v0.2.0 // indirect
+
+replace go.mau.fi/tcell => github.com/deonspengler/tcell v0.7.0

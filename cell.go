@@ -1,4 +1,4 @@
-// Copyright 2019 The TCell Authors
+// Copyright 2022 The TCell Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use file except in compliance with the License.
@@ -15,6 +15,8 @@
 package tcell
 
 import (
+	"os"
+
 	runewidth "github.com/mattn/go-runewidth"
 )
 
@@ -26,6 +28,7 @@ type cell struct {
 	lastStyle Style
 	lastComb  []rune
 	width     int
+	lock      bool
 }
 
 // CellBuffer represents a two dimensional array of character cells.
@@ -43,10 +46,14 @@ type CellBuffer struct {
 // SetContent sets the contents (primary rune, combining runes,
 // and style) for a cell at a given location.
 func (cb *CellBuffer) SetContent(x int, y int,
-	mainc rune, combc []rune, style Style) {
-
+	mainc rune, combc []rune, style Style,
+) {
 	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
 		c := &cb.cells[(y*cb.w)+x]
+
+		for i := 1; i < c.width; i++ {
+			cb.SetDirty(x+i, y, true)
+		}
 
 		c.currComb = append([]rune{}, combc...)
 
@@ -97,6 +104,9 @@ func (cb *CellBuffer) Invalidate() {
 func (cb *CellBuffer) Dirty(x, y int) bool {
 	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
 		c := &cb.cells[(y*cb.w)+x]
+		if c.lock {
+			return false
+		}
 		if c.lastMain == rune(0) {
 			return true
 		}
@@ -137,11 +147,39 @@ func (cb *CellBuffer) SetDirty(x, y int, dirty bool) {
 	}
 }
 
+// LockCell locks a cell from being drawn, effectively marking it "clean" until
+// the lock is removed. This can be used to prevent tcell from drawing a given
+// cell, even if the underlying content has changed. For example, when drawing a
+// sixel graphic directly to a TTY screen an implementer must lock the region
+// underneath the graphic to prevent tcell from drawing on top of the graphic.
+func (cb *CellBuffer) LockCell(x, y int) {
+	if x < 0 || y < 0 {
+		return
+	}
+	if x >= cb.w || y >= cb.h {
+		return
+	}
+	c := &cb.cells[(y*cb.w)+x]
+	c.lock = true
+}
+
+// UnlockCell removes a lock from the cell and marks it as dirty
+func (cb *CellBuffer) UnlockCell(x, y int) {
+	if x < 0 || y < 0 {
+		return
+	}
+	if x >= cb.w || y >= cb.h {
+		return
+	}
+	c := &cb.cells[(y*cb.w)+x]
+	c.lock = false
+	cb.SetDirty(x, y, true)
+}
+
 // Resize is used to resize the cells array, with different dimensions,
 // while preserving the original contents.  The cells will be invalidated
 // so that they can be redrawn.
 func (cb *CellBuffer) Resize(w, h int) {
-
 	if cb.h == h && cb.w == w {
 		return
 	}
@@ -173,5 +211,23 @@ func (cb *CellBuffer) Fill(r rune, style Style) {
 		c.currComb = nil
 		c.currStyle = style
 		c.width = 1
+	}
+}
+
+var runeConfig *runewidth.Condition
+
+func init() {
+	// The defaults for the runewidth package are poorly chosen for terminal
+	// applications.  We however will honor the setting in the environment if
+	// it is set.
+	if os.Getenv("RUNEWIDTH_EASTASIAN") == "" {
+		runewidth.DefaultCondition.EastAsianWidth = false
+	}
+
+	// For performance reasons, we create a lookup table.  However some users
+	// might be more memory conscious.  If that's you, set the TCELL_MINIMIZE
+	// environment variable.
+	if os.Getenv("TCELL_MINIMIZE") == "" {
+		runewidth.CreateLUT()
 	}
 }
